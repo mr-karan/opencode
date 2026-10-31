@@ -48,6 +48,23 @@ describe("login status", () => {
     }),
   )
 
+  it.effect("a chat on another config directory does not replace the provider's login", () =>
+    Effect.gen(function* () {
+      const claude = FakeClaude.make([])
+      const status = yield* ClaudeStatus.make(FakeIO.make({ claude }), () =>
+        Effect.succeed({ CLAUDE_CONFIG_DIR: "/logins/main" }),
+      )
+      const probe: ClaudeProbe.Result = { version: "2.1.257", account: {}, models: [] }
+
+      yield* status.report({ type: "ready", probe }, { CLAUDE_CONFIG_DIR: "/logins/second" })
+      expect(yield* SubscriptionRef.get(status.state)).toEqual({ type: "checking" })
+
+      yield* status.report({ type: "ready", probe }, { CLAUDE_CONFIG_DIR: "/logins/main" })
+      expect(yield* SubscriptionRef.get(status.state)).toEqual({ type: "ready", probe })
+      claude.check()
+    }),
+  )
+
   it.effect("reports a failed startup and recovers on the next check", () =>
     Effect.gen(function* () {
       const claude = FakeClaude.make([FakeClaude.expectStartup({ exitCode: 1 }), FakeClaude.expectStartup()])

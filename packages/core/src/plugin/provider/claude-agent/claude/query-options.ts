@@ -37,6 +37,7 @@ export function connectionEnv(connection: {
   if (typeof settings.authToken === "string") env.ANTHROPIC_AUTH_TOKEN = settings.authToken
   if (typeof settings.headerTimeout === "number") env.API_TIMEOUT_MS = String(settings.headerTimeout)
   if (typeof settings.chunkTimeout === "number") env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = String(settings.chunkTimeout)
+  if (typeof settings.configDir === "string") env.CLAUDE_CONFIG_DIR = settings.configDir
   const headers: string[] = []
   for (const [name, value] of Object.entries(connection.headers ?? {})) {
     headers.push(`${name}: ${value}`)

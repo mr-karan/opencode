@@ -78,10 +78,43 @@ your shell.
 | `settings.authToken` | `ANTHROPIC_AUTH_TOKEN` |
 | `settings.headerTimeout` | `API_TIMEOUT_MS` |
 | `settings.chunkTimeout` | `CLAUDE_STREAM_IDLE_TIMEOUT_MS` |
+| `settings.configDir` | `CLAUDE_CONFIG_DIR` |
 | `headers` | `ANTHROPIC_CUSTOM_HEADERS` |
 | `body` | `CLAUDE_CODE_EXTRA_BODY` |
 
 Set them on a model to override the provider's values for that model.
+
+### More than one Claude login
+
+Claude Code keeps each login in its config directory. Sign in once per directory, then point a model at it with
+`settings.configDir`. Use an absolute path.
+
+```bash
+CLAUDE_CONFIG_DIR=/home/you/.claude-second claude auth login
+```
+
+```jsonc title="opencode.jsonc"
+{
+  "providers": {
+    "claude-agent": {
+      "models": {
+        "opus-second": {
+          "modelID": "opus",
+          "name": "Opus (second login)",
+          "settings": { "configDir": "/home/you/.claude-second" },
+        },
+      },
+    },
+  },
+}
+```
+
+`claude-agent/opus-second` then runs on that login, in chats and as a subagent model. When a session moves to another
+login, Claude gets the session's history as a summary instead of resuming the other login's transcript, as it does after
+switching from another provider.
+
+OpenCode can't read the saved sessions of a `configDir` login yet. After 5 idle minutes, an edit or an undo, a chat on
+that login starts a new Claude session with its whole history instead of resuming.
 
 ## Limitations
 

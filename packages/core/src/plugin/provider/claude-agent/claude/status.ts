@@ -14,8 +14,8 @@ export type State =
 export interface Interface {
   readonly state: SubscriptionRef.SubscriptionRef<State>
   readonly refresh: () => Effect.Effect<void>
-  // What a chat's own process found when it started
-  readonly report: (next: State) => Effect.Effect<void>
+  // What a chat's own process found when it started, with the connection it started with
+  readonly report: (next: State, connection?: Readonly<Record<string, string>>) => Effect.Effect<void>
 }
 
 export const make = Effect.fn("ClaudeStatus.make")(function* (
@@ -44,7 +44,11 @@ export const make = Effect.fn("ClaudeStatus.make")(function* (
     yield* SubscriptionRef.set(state, next)
   }, lock.withPermit)
 
-  const report = (next: State) => SubscriptionRef.set(state, next)
+  // A chat on another login, such as a model's own configDir, does not speak for the provider's login and models.
+  const report = Effect.fn("ClaudeStatus.report")(function* (next: State, chat?: Readonly<Record<string, string>>) {
+    if (chat && chat.CLAUDE_CONFIG_DIR !== (yield* connection()).CLAUDE_CONFIG_DIR) return
+    yield* SubscriptionRef.set(state, next)
+  })
 
   return { state, refresh, report } satisfies Interface
 })

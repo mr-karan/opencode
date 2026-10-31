@@ -80,6 +80,7 @@ Users can configure the `claude-agent` provider and its models in opencode confi
 | `settings.authToken`     | `ANTHROPIC_AUTH_TOKEN`          |
 | `settings.headerTimeout` | `API_TIMEOUT_MS`                |
 | `settings.chunkTimeout`  | `CLAUDE_STREAM_IDLE_TIMEOUT_MS` |
+| `settings.configDir`     | `CLAUDE_CONFIG_DIR`             |
 | `headers`                | `ANTHROPIC_CUSTOM_HEADERS`      |
 | `body`                   | `CLAUDE_CODE_EXTRA_BODY`        |
 | effort                   | the SDK's `effort` option       |
@@ -88,6 +89,8 @@ Users can configure the `claude-agent` provider and its models in opencode confi
 - A model's config overrides the provider's.
 - Settings are applied in this order, with later ones winning: the user's shell, then opencode config, then the settings we turn off.
 - Changing any of these restarts the Claude process.
+- `configDir` picks a Claude Code login, so a model can use a different login from its provider. Claude Code keeps transcripts in that directory, so the plugin records which directory wrote a session, and a request from another directory starts a new Claude session with the whole history. A chat on a model's own login does not update the provider's login status or model list.
+- The SDK's session functions (`getSessionInfo`, `forkSession`, `deleteSession`) only read `CLAUDE_CONFIG_DIR` from opencode's own environment. With a different `configDir`, the plugin can't find saved sessions, so after the idle timeout, an edit or an undo the chat starts over with the whole history instead of resuming.
 - Without an explicit max output, we drop opencode's automatic limit and let Claude pick its own.
 
 ## History and Switching Models

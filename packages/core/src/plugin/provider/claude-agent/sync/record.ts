@@ -9,6 +9,8 @@ const Record = Schema.Struct({
   history: Schema.optional(Schema.Array(Checkpoint)),
   // After cancellation, Claude owns the partial reply; history ends at the input it received.
   interrupted: Schema.optional(Schema.Boolean),
+  // Claude Code keeps transcripts in its config directory, so only the same directory can resume this session.
+  configDir: Schema.optional(Schema.String),
 })
 export type Record = typeof Record.Type
 

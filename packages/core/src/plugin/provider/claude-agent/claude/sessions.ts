@@ -72,6 +72,8 @@ export interface Interface {
 const launch = (request: Request) =>
   JSON.stringify([request.maxOutputTokens, request.connection, request.system, request.tools])
 
+const configDir = (request: Request) => request.connection?.CLAUDE_CONFIG_DIR
+
 const toError = (error: unknown) => (error instanceof Error ? error : new Error(String(error)))
 const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: toError })
 const attemptSync = <A>(run: () => A) => Effect.try({ try: run, catch: toError })
@@ -198,7 +200,7 @@ export function registry() {
       )
       const process = opened.process
       // A new process reports its version, login and models, which keeps the model list current without a separate check.
-      if (starting) yield* input.status.report({ type: "ready", probe: opened.probe })
+      if (starting) yield* input.status.report({ type: "ready", probe: opened.probe }, request.connection)
       // Apply controls before sending input or releasing parked tool results.
       if (process.model !== request.model) {
         yield* attempt(() => process.session.setModel(request.model))
@@ -308,7 +310,12 @@ export function registry() {
                 toolMessages,
               })
             : undefined
-        entry.record = { claudeSessionID: session.id, history, interrupted: interrupted && !completed }
+        entry.record = {
+          claudeSessionID: session.id,
+          history,
+          interrupted: interrupted && !completed,
+          configDir: configDir(request),
+        }
         yield* records.set(request.sessionID, entry.record)
       })
 
@@ -345,7 +352,7 @@ export function registry() {
       source?: SessionRecord.Record,
     ) {
       const boundary = SyncDecision.boundary(request.prompt, source)
-      if (!source || !boundary) return 0
+      if (!source || !boundary || source.configDir !== configDir(request)) return 0
       // Validate catch-up input before creating a forked transcript on disk.
       yield* attemptSync(() => CatchUp.content(request.prompt, boundary.start))
       const fork = yield* attempt(() => input.io.fork(source.claudeSessionID, boundary.messageID))
@@ -354,7 +361,7 @@ export function registry() {
         hash: checkpoint.hash,
         claudeMessageID: checkpoint.claudeMessageID ? fork.messages.get(checkpoint.claudeMessageID) : undefined,
       }))
-      entry.record = { claudeSessionID: fork.sessionID, history }
+      entry.record = { claudeSessionID: fork.sessionID, history, configDir: source.configDir }
       return boundary.start
     }, Effect.uninterruptible)
 
@@ -386,6 +393,8 @@ export function registry() {
       }
 
       if (!entry.record) entry.record = yield* records.get(request.sessionID)
+      // Another config directory is another login, which can't see this transcript, so it rebuilds from history.
+      if (entry.record && entry.record.configDir !== configDir(request)) entry.record = undefined
       const decision = SyncDecision.decide(request.prompt, entry.record)
       const start = yield* Effect.gen(function* () {
         if (decision.kind === "fresh" || decision.kind === "changed") {

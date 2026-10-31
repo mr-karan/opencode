@@ -87,6 +87,39 @@ describe("Claude sessions", () => {
     }),
   )
 
+  it.effect("a chat moved to another config directory rebuilds from history instead of resuming", () =>
+    Effect.gen(function* () {
+      const claude = FakeClaude.make([
+        FakeClaude.expectStartup(),
+        FakeClaude.expectTurn(),
+        FakeClaude.expectInterrupt(),
+        FakeClaude.expectStartup(),
+        FakeClaude.expectTurn({ index: 1 }),
+        FakeClaude.expectInterrupt(),
+      ])
+      const test = yield* TestSessions.start(claude)
+      yield* TestSessions.reply(test.model, first)
+      const context = yield* Effect.context<never>()
+      const second = new ClaudeAgentLanguageModel.Model(
+        "haiku",
+        { run: (request, signal) => Effect.runPromiseWith(context)(test.sessions.run(request), { signal }) },
+        { CLAUDE_CONFIG_DIR: "/logins/second" },
+      )
+      yield* TestSessions.reply(second, TestSessions.followup())
+
+      expect(claude.runs).toHaveLength(2)
+      expect(claude.runs[1]!.env.CLAUDE_CONFIG_DIR).toBe("/logins/second")
+      expect(claude.runs[1]!.args.some((arg) => arg.startsWith("--resume="))).toBe(false)
+      const user = claude.runs[1]!.received.find((message) => message.type === "user")
+      expect(JSON.stringify(user.message.content)).toContain("<conversation-checkpoint>")
+      expect(yield* SessionRecord.make(test.storage).get("session-a")).toMatchObject({
+        configDir: "/logins/second",
+      })
+      yield* test.registry.close()
+      claude.check()
+    }),
+  )
+
   it.effect("cancellation drains past the interrupt receipt before accepting another turn", () =>
     Effect.gen(function* () {
       const drain = Promise.withResolvers<void>()

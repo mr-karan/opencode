@@ -10,6 +10,8 @@ import { RequestKind } from "@opencode/core/plugin/provider/claude-agent/languag
 import { ClaudeSystemPrompt } from "@opencode/core/plugin/provider/claude-agent/language-model/system-prompt"
 import { ClaudeIntegration } from "@opencode/core/plugin/provider/claude-agent/integration"
 import { ClaudeProvider } from "@opencode/core/plugin/provider/claude-agent/provider"
+import { Config } from "@opencode/core/config"
+import { ConfigProviderPlugin } from "@opencode/core/config/plugin/provider"
 import { Credential } from "@opencode/core/credential"
 import { Database } from "@opencode/core/database/database"
 import { Environment, makeFiles } from "@opencode/core/environment/index"
@@ -19,6 +21,7 @@ import { KV } from "@opencode/core/kv"
 import { Location } from "@opencode/core/location"
 import { Model } from "@opencode/core/model"
 import { Money } from "@opencode/schema/money"
+import { Document, Info } from "@opencode/schema/config"
 import { Plugin } from "@opencode/core/plugin"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
 import { PluginHost } from "@opencode/core/plugin/host"
@@ -27,7 +30,7 @@ import { Provider } from "@opencode/core/provider"
 import { Session } from "@opencode/core/session"
 import { SessionInbox } from "@opencode/core/session/inbox"
 import { describe, expect } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { FakeClaude } from "./lib/fake-claude"
 import { FakeIO } from "./lib/fake-io"
 import { TestSessions } from "./lib/sessions"
@@ -486,12 +489,13 @@ describe("ClaudeAgentPlugin provider config", () => {
             authToken: "config-token",
             headerTimeout: 60000,
             chunkTimeout: 600000,
+            configDir: "/logins/main",
           }
           provider.headers = { "X-Team": "core" }
           provider.body = { metadata: { user_id: "dan" } }
         })
         editor.models.update(ClaudeProvider.ID, haiku.id, (model) => {
-          model.settings = { baseURL: "https://haiku-gateway.example" }
+          model.settings = { baseURL: "https://haiku-gateway.example", configDir: "/logins/second" }
           model.headers = { "X-Model": "haiku" }
         })
       })
@@ -503,6 +507,7 @@ describe("ClaudeAgentPlugin provider config", () => {
       expect(check.ANTHROPIC_AUTH_TOKEN).toBe("config-token")
       expect(check.API_TIMEOUT_MS).toBe("60000")
       expect(check.CLAUDE_STREAM_IDLE_TIMEOUT_MS).toBe("600000")
+      expect(check.CLAUDE_CONFIG_DIR).toBe("/logins/main")
       expect(check.ANTHROPIC_CUSTOM_HEADERS).toBe("X-Team: core")
       expect(check.CLAUDE_CODE_EXTRA_BODY).toBe(JSON.stringify({ metadata: { user_id: "dan" } }))
 
@@ -523,8 +528,53 @@ describe("ClaudeAgentPlugin provider config", () => {
       const chat = claude.runs.find((run) => run.args.includes("--include-partial-messages"))!.env
       expect(chat.ANTHROPIC_BASE_URL).toBe("https://haiku-gateway.example")
       expect(chat.ANTHROPIC_AUTH_TOKEN).toBe("config-token")
+      expect(chat.CLAUDE_CONFIG_DIR).toBe("/logins/second")
       expect(chat.ANTHROPIC_CUSTOM_HEADERS).toBe("X-Team: core\nX-Model: haiku")
       expect(chat.CLAUDE_CODE_EXTRA_BODY).toBe(JSON.stringify({ metadata: { user_id: "dan" } }))
+      yield* registry.close()
+      claude.check()
+    }),
+  )
+
+  it.live("runs a configured model alias on its own Claude Code login", () =>
+    Effect.gen(function* () {
+      const store = yield* storage
+      yield* store.set("models", { models: [{ id: "haiku", name: "Haiku", efforts: [] }] })
+      yield* connect
+      const claude = FakeClaude.make(
+        [FakeClaude.expectStartup(), FakeClaude.expectTurn(), FakeClaude.expectInterrupt()],
+        { probes: true },
+      )
+      const registry = yield* addPlugin(FakeIO.make({ claude }))
+      const host = yield* PluginHost.make(yield* Plugin.Service)
+      const config = new Document({
+        type: "document",
+        info: Schema.decodeUnknownSync(Info)({
+          providers: {
+            "claude-agent": {
+              models: { "haiku-second": { modelID: "haiku", settings: { configDir: "/logins/second" } } },
+            },
+          },
+        }),
+      })
+      yield* ConfigProviderPlugin.Plugin.effect(host).pipe(Effect.provide(Config.testLayer([config])))
+
+      const models = yield* Model.Service
+      const available = yield* models.available()
+      const model = available.find((model) => model.providerID === ClaudeProvider.ID && model.id === "haiku-second")
+      if (!model) throw new Error("Expected the configured alias to be available")
+      const language = yield* (yield* AISDK.Service).language(model)
+      const result = yield* Effect.promise(() =>
+        language.doStream({
+          prompt: TestSessions.prompt("Remember the marker COPPER-OTTER. Reply only with that marker."),
+          headers: { [RequestKind.SESSION_HEADER]: "session-a", [RequestKind.HEADER]: "primary" },
+        }),
+      )
+      expect(TestSessions.text(yield* Effect.promise(() => TestSessions.collect(result.stream)))).toBe("COPPER-OTTER")
+
+      const chat = claude.runs.find((run) => run.args.includes("--include-partial-messages"))!
+      expect(chat.env.CLAUDE_CONFIG_DIR).toBe("/logins/second")
+      expect(chat.args).toContain("--model=haiku")
       yield* registry.close()
       claude.check()
     }),
